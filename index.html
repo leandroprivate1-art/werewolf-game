@@ -284,10 +284,10 @@
                 <div class="max-w-md mx-auto">
                     <div class="flex justify-between text-[10px] font-black text-zinc-600 uppercase mb-2">
                         <span>Reshuffle Progress</span>
-                        <span>{{ currentPlayerIndex }} / {{ players.length }}</span>
+                        <span>{{ currentPlayerIndex + 1 }} / {{ players.length }}</span>
                     </div>
                     <div class="h-2 bg-zinc-900 rounded-full overflow-hidden border border-zinc-800">
-                        <div class="h-full bg-violet-600 transition-all duration-500" :style="{ width: (currentPlayerIndex / players.length * 100) + '%' }"></div>
+                        <div class="h-full bg-violet-600 transition-all duration-500" :style="{ width: ((currentPlayerIndex + 1) / players.length * 100) + '%' }"></div>
                     </div>
                 </div>
             </div>
@@ -298,10 +298,10 @@
                     <h2 class="text-4xl font-black text-white">Role Reshuffle</h2>
                     <p class="text-zinc-500">Pass the device to:</p>
                     <div class="bg-zinc-900 border-2 border-zinc-800 rounded-2xl p-6 text-3xl font-black text-white text-center">
-                        {{ players[currentPlayerIndex].name }}
+                        {{ currentReassignPlayer.name }}
                     </div>
                     <button @click="regStep = 'reveal'" class="w-full py-5 bg-violet-600 hover:bg-violet-700 text-white rounded-2xl text-xl font-black shadow-xl transition">
-                        I am {{ players[currentPlayerIndex].name }}
+                        I am {{ currentReassignPlayer.name }}
                     </button>
                     <button @click="modalType = null" class="text-zinc-700 font-bold text-sm mt-4 transition hover:text-zinc-500">MODERATOR: Skip Reshuffle</button>
                 </div>
@@ -310,10 +310,10 @@
                 <div v-if="regStep === 'reveal'" class="space-y-8">
                     <div class="bg-zinc-900 border border-zinc-800 rounded-3xl p-10 shadow-2xl relative overflow-hidden">
                         <div class="absolute inset-0 bg-violet-600/5 pointer-events-none"></div>
-                        <p class="text-zinc-500 uppercase font-black tracking-widest text-sm mb-4">{{ players[currentPlayerIndex].name }}, your NEW role is...</p>
-                        <i :class="[getRoleIcon(players[currentPlayerIndex].role), getRoleColor(players[currentPlayerIndex].role)]" class="text-8xl mb-6 block"></i>
-                        <h2 :class="getRoleColor(players[currentPlayerIndex].role)" class="text-5xl font-black mb-4 uppercase">{{ players[currentPlayerIndex].role }}</h2>
-                        <p class="text-zinc-400 italic">"{{ getRoleQuote(players[currentPlayerIndex].role) }}"</p>
+                        <p class="text-zinc-500 uppercase font-black tracking-widest text-sm mb-4">{{ currentReassignPlayer.name }}, your NEW role is...</p>
+                        <i :class="[getRoleIcon(currentReassignPlayer.role), getRoleColor(currentReassignPlayer.role)]" class="text-8xl mb-6 block"></i>
+                        <h2 :class="getRoleColor(currentReassignPlayer.role)" class="text-5xl font-black mb-4 uppercase">{{ currentReassignPlayer.role }}</h2>
+                        <p class="text-zinc-400 italic">"{{ getRoleQuote(currentReassignPlayer.role) }}"</p>
                     </div>
                     <div class="space-y-4">
                         <p class="text-red-500 font-bold animate-pulse">DO NOT SHOW ANYONE!</p>
@@ -354,6 +354,11 @@
             const regName = ref('');
             const regRole = ref('');
             const currentPlayerIndex = ref(0);
+            const reassignOrder = ref([]);
+            const currentReassignPlayer = computed(() => {
+                const idx = reassignOrder.value[currentPlayerIndex.value];
+                return players.value[idx ?? currentPlayerIndex.value] || { name: '', role: '' };
+            });
 
             // Rename management
             const renameValue = ref('');
@@ -377,7 +382,27 @@
                 logs.value.unshift({ time: now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }), text });
             };
 
-            const openSetupModal = () => { modalType.value = 'setup'; };
+            
+
+            // --- Randomness helpers (unbiased shuffle) ---
+            const randomFloat = () => {
+                // Prefer cryptographically-strong randomness when available
+                if (window.crypto && window.crypto.getRandomValues) {
+                    const buf = new Uint32Array(1);
+                    window.crypto.getRandomValues(buf);
+                    return buf[0] / 4294967296; // 2^32
+                }
+                return Math.random();
+            };
+            const shuffleInPlace = (arr) => {
+                // Fisher–Yates shuffle
+                for (let i = arr.length - 1; i > 0; i--) {
+                    const j = Math.floor(randomFloat() * (i + 1));
+                    [arr[i], arr[j]] = [arr[j], arr[i]];
+                }
+                return arr;
+            };
+const openSetupModal = () => { modalType.value = 'setup'; };
 
             const confirmSetup = () => {
                 let newPool = [];
@@ -387,7 +412,8 @@
                 while(newPool.length < totalExpected.value) {
                     newPool.push('Villager');
                 }
-                pool.value = newPool.sort(() => Math.random() - 0.5);
+                shuffleInPlace(newPool);
+                pool.value = newPool;
                 addLog(`Pool locked: ${totalExpected.value} roles ready.`);
                 modalType.value = null;
             };
@@ -400,7 +426,8 @@
 
             const handleRegSubmit = () => {
                 if (!regName.value.trim() || pool.value.length === 0) return;
-                regRole.value = pool.value.shift();
+                const drawIndex = Math.floor(randomFloat() * pool.value.length);
+                regRole.value = pool.value.splice(drawIndex, 1)[0];
                 regStep.value = 'reveal';
             };
 
@@ -486,7 +513,11 @@
                 while(newPool.length < players.value.length) {
                     newPool.push('Villager');
                 }
-                newPool = newPool.sort(() => Math.random() - 0.5);
+                // If the configured specials exceed player count (e.g., players deleted),
+                // keep a random subset so distribution remains fair and random.
+                shuffleInPlace(newPool);
+                if (newPool.length > players.value.length) newPool = newPool.slice(0, players.value.length);
+                shuffleInPlace(newPool);
 
                 players.value.forEach(p => {
                     p.role = newPool.shift();
@@ -494,6 +525,8 @@
                     p.roleVisible = false;
                 });
 
+                reassignOrder.value = players.value.map((_, i) => i);
+                shuffleInPlace(reassignOrder.value);
                 addLog('Game Reset. Roles reshuffled.');
                 
                 currentPlayerIndex.value = 0;
@@ -547,7 +580,7 @@
             return {
                 gameState, nightNum, players, modalType, logs,
                 totalExpected, pool, regStep, regName, regRole, autoRoleConfig, totalSpecialRoles,
-                currentPlayerIndex, currentPhaseLabel, allRevealed, renameValue,
+                currentPlayerIndex, reassignOrder, currentReassignPlayer, currentPhaseLabel, allRevealed, renameValue,
                 openSetupModal, confirmSetup, startRegistration, handleRegSubmit, finishRegistration,
                 toggleStatus, toggleAllRoles, toggleGame, resetGame, nextReassign, finishReassign,
                 deletePlayer, openRenameModal, confirmRename,
