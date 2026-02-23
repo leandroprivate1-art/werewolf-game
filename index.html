@@ -1,0 +1,560 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Werewolf Moderator Pro</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800&display=swap');
+        
+        body { 
+            font-family: 'Inter', sans-serif; 
+            background-color: #09090b; 
+            color: #e4e4e7; 
+            overflow: hidden;
+        }
+
+        .card-gradient { background: linear-gradient(180deg, #18181b 0%, #121214 100%); }
+
+        .fade-enter-active, .fade-leave-active { transition: opacity 0.3s ease; transform: translateY(0); }
+        .fade-enter-from, .fade-leave-to { opacity: 0; transform: translateY(10px); }
+
+        .pulse-indicator { animation: pulse 2s infinite; }
+        @keyframes pulse {
+            0% { transform: scale(0.95); opacity: 0.5; }
+            50% { transform: scale(1.05); opacity: 1; }
+            100% { transform: scale(0.95); opacity: 0.5; }
+        }
+        
+        input::-webkit-outer-spin-button, input::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+    </style>
+</head>
+<body>
+
+<div id="app" class="h-screen flex flex-col">
+    
+    <!-- TOP NAVIGATION -->
+    <header class="h-16 bg-zinc-950 border-b border-zinc-800 flex items-center justify-between px-4 shrink-0 z-30">
+        <div class="flex items-center gap-2">
+            <button @click="openSetupModal" :disabled="gameState !== 'setup'" class="bg-violet-600 hover:bg-violet-700 disabled:bg-zinc-800 disabled:text-zinc-500 text-white px-4 py-2 rounded-md text-sm font-bold flex items-center gap-2 transition">
+                <i class="fa-solid fa-gears"></i> 1. Setup Pool
+            </button>
+            <button @click="startRegistration" :disabled="gameState !== 'setup' || pool.length === 0" :class="pool.length > 0 ? 'bg-emerald-600 hover:bg-emerald-700' : 'bg-zinc-800 text-zinc-500'" class="text-white px-4 py-2 rounded-md text-sm font-bold flex items-center gap-2 transition">
+                <i class="fa-solid fa-user-plus"></i> 2. Sign-In
+            </button>
+            <div class="h-6 w-px bg-zinc-800 mx-1"></div>
+            <button @click="resetGame" class="bg-zinc-800 hover:bg-red-900/40 text-red-400 px-3 py-2 rounded-md text-sm font-medium border border-zinc-700 transition">
+                <i class="fa-solid fa-rotate-left"></i> Reset
+            </button>
+        </div>
+
+        <div class="flex items-center gap-4">
+            <div class="bg-zinc-900 border border-zinc-800 px-4 py-1.5 rounded text-xs font-bold uppercase tracking-wider">
+                <span :class="gameState === 'setup' ? 'text-zinc-500' : 'text-cyan-400'">{{ currentPhaseLabel }}</span>
+            </div>
+            <button @click="toggleGame" :disabled="players.length === 0" :class="gameState === 'setup' || gameState === 'day' ? 'bg-indigo-600 hover:bg-indigo-700' : 'bg-amber-600 hover:bg-amber-500'" class="text-white px-6 py-2 rounded-md text-sm font-bold flex items-center gap-2 transition shadow-lg min-w-[140px] justify-center disabled:opacity-50">
+                <i :class="gameState === 'setup' || gameState === 'day' ? 'fa-solid fa-moon' : 'fa-solid fa-sun'"></i>
+                {{ gameState === 'setup' ? 'Start Night' : (gameState === 'night' ? 'Start Day' : 'Next Night') }}
+            </button>
+        </div>
+
+        <div class="flex items-center gap-3">
+            <button @click="toggleAllRoles" class="bg-zinc-800 hover:bg-zinc-700 text-zinc-400 px-3 py-1.5 rounded text-xs font-bold flex items-center gap-2 border border-zinc-700 transition">
+                <i :class="allRevealed ? 'fa-solid fa-eye' : 'fa-solid fa-eye-slash'"></i>
+                {{ allRevealed ? 'Hide All' : 'Reveal All' }}
+            </button>
+            <div class="bg-zinc-900 border border-zinc-800 px-3 py-1.5 rounded text-xs font-bold">
+                <span class="text-cyan-400">{{ players.length }} Players</span>
+            </div>
+        </div>
+    </header>
+
+    <div class="flex flex-1 overflow-hidden">
+        <!-- HISTORY LOG -->
+        <aside class="w-64 bg-zinc-950 border-r border-zinc-800 flex flex-col shrink-0">
+            <div class="p-4 border-b border-zinc-800">
+                <h4 class="text-xs font-bold text-zinc-500 uppercase tracking-widest">Action Log</h4>
+            </div>
+            <div class="flex-1 overflow-y-auto p-4 space-y-3">
+                <div v-for="(log, idx) in logs" :key="idx" class="border-l-2 border-zinc-800 pl-3 py-1">
+                    <div class="text-[10px] text-zinc-600 font-bold">{{ log.time }}</div>
+                    <div class="text-xs text-zinc-300">{{ log.text }}</div>
+                </div>
+                <div v-if="logs.length === 0" class="text-zinc-600 text-xs italic text-center mt-10">No events yet.</div>
+            </div>
+        </aside>
+
+        <!-- MAIN MODERATOR DASHBOARD -->
+        <main class="flex-1 overflow-y-auto p-6 bg-zinc-950">
+            <div v-if="players.length === 0" class="h-full flex flex-col items-center justify-center text-center opacity-40">
+                <i class="fa-solid fa-users text-6xl mb-4"></i>
+                <h2 class="text-xl font-bold">Village is empty</h2>
+                <p>Set up the player count and have students sign in.</p>
+            </div>
+            
+            <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5 gap-6 max-w-[1600px] mx-auto pb-20">
+                <div v-for="player in players" :key="player.id" 
+                    :class="[player.isAlive ? 'border-zinc-800' : 'border-red-900/30 opacity-50 grayscale']"
+                    class="card-gradient rounded-xl border flex flex-col overflow-hidden transition duration-300 relative group">
+                    
+                    <!-- Player Actions Overlay (Delete/Rename) -->
+                    <div class="absolute top-2 left-2 flex gap-1 z-10">
+                        <button @click="openRenameModal(player)" class="w-7 h-7 bg-zinc-800/80 hover:bg-violet-600 text-zinc-400 hover:text-white rounded flex items-center justify-center transition backdrop-blur-sm">
+                            <i class="fa-solid fa-pen-to-square text-[10px]"></i>
+                        </button>
+                        <button @click="deletePlayer(player)" class="w-7 h-7 bg-zinc-800/80 hover:bg-red-600 text-zinc-400 hover:text-white rounded flex items-center justify-center transition backdrop-blur-sm">
+                            <i class="fa-solid fa-trash text-[10px]"></i>
+                        </button>
+                    </div>
+
+                    <div class="p-6 flex flex-col items-center flex-1 relative">
+                        <div v-if="player.roleVisible" class="absolute top-3 right-3 bg-zinc-800 text-[10px] font-bold px-2 py-1 rounded border border-zinc-700 text-zinc-300">
+                            {{ player.role }}
+                        </div>
+
+                        <div class="w-20 h-20 mb-4 relative">
+                            <svg viewBox="0 0 24 24" fill="none" class="w-full h-full">
+                                <circle cx="12" cy="12" r="10" fill="#27272a"/>
+                                <path d="M7 14s1-1 5-1 5 1 5 1" stroke="#52525b" stroke-width="1.5" stroke-linecap="round"/>
+                            </svg>
+                            <div v-if="player.roleVisible" class="absolute inset-0 flex items-center justify-center bg-black/60 rounded-full backdrop-blur-sm">
+                                <i :class="getRoleIcon(player.role)" class="text-2xl text-white"></i>
+                            </div>
+                        </div>
+
+                        <h3 class="text-lg font-bold text-white tracking-wide truncate w-full text-center">{{ player.name }}</h3>
+                        <p class="text-xs mt-1 font-bold uppercase tracking-tighter" :class="player.roleVisible ? 'text-zinc-400' : 'text-zinc-600'">
+                            {{ player.roleVisible ? player.role : 'Hidden' }}
+                        </p>
+                    </div>
+
+                    <div class="px-4 pb-4 flex gap-2">
+                        <button @click="toggleStatus(player)" :class="player.isAlive ? 'bg-zinc-800 text-zinc-400' : 'bg-red-600/20 text-red-500'" class="flex-1 py-2 rounded-lg text-[10px] font-black uppercase transition">
+                            {{ player.isAlive ? 'Kill' : 'Revive' }}
+                        </button>
+                        <button @click="player.roleVisible = !player.roleVisible" class="px-3 bg-zinc-800 text-zinc-400 rounded-lg">
+                            <i :class="player.roleVisible ? 'fa-solid fa-eye-slash' : 'fa-solid fa-eye'"></i>
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </main>
+    </div>
+
+    <!-- RENAME MODAL -->
+    <transition name="fade">
+        <div v-if="modalType === 'rename'" class="fixed inset-0 z-[110] flex items-center justify-center bg-black/80 backdrop-blur-sm p-4">
+            <div class="bg-zinc-900 border border-zinc-700 rounded-2xl w-full max-w-sm p-6 shadow-2xl">
+                <h3 class="text-xl font-black text-white mb-4">Rename Player</h3>
+                <input 
+                    v-model="renameValue" 
+                    type="text" 
+                    class="w-full bg-zinc-950 border border-zinc-700 rounded-xl p-4 text-white text-lg focus:border-violet-600 outline-none mb-6"
+                    @keyup.enter="confirmRename"
+                >
+                <div class="flex gap-3">
+                    <button @click="modalType = null" class="flex-1 py-3 bg-zinc-800 text-zinc-400 rounded-xl font-bold">Cancel</button>
+                    <button @click="confirmRename" class="flex-1 py-3 bg-violet-600 text-white rounded-xl font-bold">Save</button>
+                </div>
+            </div>
+        </div>
+    </transition>
+
+    <!-- STEP 1: SETUP MODAL -->
+    <transition name="fade">
+        <div v-if="modalType === 'setup'" class="fixed inset-0 z-50 flex items-center justify-center bg-black/90 backdrop-blur-md p-4">
+            <div class="bg-zinc-900 border border-zinc-700 rounded-2xl w-full max-w-lg p-8 shadow-2xl">
+                <h3 class="text-2xl font-black text-white mb-2">Game Setup</h3>
+                <p class="text-zinc-500 text-sm mb-8">Define how many students will play and which roles will be in the deck.</p>
+                
+                <div class="space-y-6">
+                    <!-- Total Players -->
+                    <div class="bg-violet-600/10 border border-violet-500/30 p-4 rounded-xl">
+                        <label class="block text-xs font-black text-violet-400 uppercase tracking-widest mb-2">Total Expected Students</label>
+                        <div class="flex items-center gap-4">
+                            <button @click="totalExpected = Math.max(totalExpected - 1, totalSpecialRoles)" class="w-12 h-12 bg-violet-600 text-white rounded-lg font-bold">-</button>
+                            <input type="number" v-model="totalExpected" class="flex-1 bg-transparent text-3xl font-black text-center text-white outline-none">
+                            <button @click="totalExpected++" class="w-12 h-12 bg-violet-600 text-white rounded-lg font-bold">+</button>
+                        </div>
+                    </div>
+
+                    <!-- Role Pool -->
+                    <div class="grid grid-cols-2 gap-3">
+                        <div v-for="config in autoRoleConfig" :key="config.role" class="flex flex-col p-3 bg-zinc-950 rounded-xl border border-zinc-800">
+                            <div class="flex items-center gap-2 mb-2">
+                                <i :class="[getRoleIcon(config.role), config.color]" class="text-sm"></i>
+                                <span class="text-xs font-bold text-zinc-300">{{ config.role }}</span>
+                            </div>
+                            <div class="flex items-center justify-between">
+                                <button @click="config.count = Math.max(config.min, config.count - 1)" class="w-8 h-8 rounded bg-zinc-800 text-white">-</button>
+                                <span class="font-black text-white">{{ config.count }}</span>
+                                <button @click="config.count++" class="w-8 h-8 rounded bg-zinc-800 text-white">+</button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="mt-8 flex flex-col gap-3">
+                    <div class="text-center text-xs text-zinc-500 font-bold uppercase tracking-widest">
+                        Total Pool: {{ totalSpecialRoles }} Specials + {{ totalExpected - totalSpecialRoles }} Villagers
+                    </div>
+                    <button @click="confirmSetup" class="w-full py-4 bg-violet-600 hover:bg-violet-700 text-white rounded-xl font-black text-lg transition">
+                        Lock In Game Pool
+                    </button>
+                    <button @click="modalType = null" class="text-zinc-600 font-bold text-sm">Cancel</button>
+                </div>
+            </div>
+        </div>
+    </transition>
+
+    <!-- STEP 2: REGISTRATION MODAL -->
+    <transition name="fade">
+        <div v-if="modalType === 'registration'" class="fixed inset-0 z-[100] flex flex-col items-center justify-center bg-zinc-950 p-6 text-center">
+            
+            <!-- PROGRESS BAR -->
+            <div class="absolute top-10 left-0 right-0 px-10">
+                <div class="max-w-md mx-auto">
+                    <div class="flex justify-between text-[10px] font-black text-zinc-600 uppercase mb-2">
+                        <span>Registration Progress</span>
+                        <span>{{ players.length }} / {{ totalExpected }}</span>
+                    </div>
+                    <div class="h-2 bg-zinc-900 rounded-full overflow-hidden border border-zinc-800">
+                        <div class="h-full bg-violet-600 transition-all duration-500" :style="{ width: (players.length / totalExpected * 100) + '%' }"></div>
+                    </div>
+                </div>
+            </div>
+
+            <div v-if="players.length < totalExpected" class="max-w-md w-full">
+                <!-- Input Step -->
+                <div v-if="regStep === 'input'" class="space-y-6">
+                    <h2 class="text-4xl font-black text-white">Student Sign-In</h2>
+                    <p class="text-zinc-500">Pass the device to the next student.</p>
+                    <input 
+                        v-model="regName" 
+                        type="text" 
+                        class="w-full bg-zinc-900 border-2 border-zinc-800 rounded-2xl p-6 text-2xl text-white text-center focus:border-violet-600 outline-none transition" 
+                        placeholder="Type your name..."
+                        @keyup.enter="handleRegSubmit"
+                    >
+                    <button @click="handleRegSubmit" :disabled="!regName.trim()" class="w-full py-5 bg-violet-600 hover:bg-violet-700 text-white rounded-2xl text-xl font-black shadow-xl disabled:opacity-50">
+                        Check My Role
+                    </button>
+                    <button @click="modalType = null" class="text-zinc-700 font-bold text-sm mt-4">MODERATOR: Stop Registration</button>
+                </div>
+
+                <!-- Reveal Step -->
+                <div v-if="regStep === 'reveal'" class="space-y-8">
+                    <div class="bg-zinc-900 border border-zinc-800 rounded-3xl p-10 shadow-2xl relative overflow-hidden">
+                        <div class="absolute inset-0 bg-violet-600/5 pointer-events-none"></div>
+                        <p class="text-zinc-500 uppercase font-black tracking-widest text-sm mb-4">{{ regName }}, you are a...</p>
+                        <i :class="[getRoleIcon(regRole), getRoleColor(regRole)]" class="text-8xl mb-6 block"></i>
+                        <h2 :class="getRoleColor(regRole)" class="text-5xl font-black mb-4 uppercase">{{ regRole }}</h2>
+                        <p class="text-zinc-400 italic">"{{ getRoleQuote(regRole) }}"</p>
+                    </div>
+                    <div class="space-y-4">
+                        <p class="text-red-500 font-bold animate-pulse">DO NOT SHOW ANYONE!</p>
+                        <button @click="finishRegistration" class="w-full py-6 bg-white text-black rounded-2xl text-2xl font-black shadow-2xl">
+                            Close & Pass Phone
+                        </button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Done! -->
+            <div v-else class="max-w-md w-full space-y-6">
+                <i class="fa-solid fa-circle-check text-emerald-500 text-8xl mb-4"></i>
+                <h2 class="text-4xl font-black text-white">All Set!</h2>
+                <p class="text-zinc-400">All {{ totalExpected }} students have been registered and assigned roles.</p>
+                <button @click="modalType = null" class="w-full py-5 bg-violet-600 text-white rounded-2xl text-xl font-black">
+                    Go to Moderator Console
+                </button>
+            </div>
+        </div>
+    </transition>
+
+    <!-- STEP 3: REASSIGN/RESHUFFLE MODAL -->
+    <transition name="fade">
+        <div v-if="modalType === 'reassign'" class="fixed inset-0 z-[100] flex flex-col items-center justify-center bg-zinc-950 p-6 text-center">
+            
+            <!-- PROGRESS BAR -->
+            <div class="absolute top-10 left-0 right-0 px-10" v-if="regStep !== 'done'">
+                <div class="max-w-md mx-auto">
+                    <div class="flex justify-between text-[10px] font-black text-zinc-600 uppercase mb-2">
+                        <span>Reshuffle Progress</span>
+                        <span>{{ currentPlayerIndex }} / {{ players.length }}</span>
+                    </div>
+                    <div class="h-2 bg-zinc-900 rounded-full overflow-hidden border border-zinc-800">
+                        <div class="h-full bg-violet-600 transition-all duration-500" :style="{ width: (currentPlayerIndex / players.length * 100) + '%' }"></div>
+                    </div>
+                </div>
+            </div>
+
+            <div v-if="regStep !== 'done'" class="max-w-md w-full">
+                <!-- Pass Phone Step -->
+                <div v-if="regStep === 'input'" class="space-y-6">
+                    <h2 class="text-4xl font-black text-white">Role Reshuffle</h2>
+                    <p class="text-zinc-500">Pass the device to:</p>
+                    <div class="bg-zinc-900 border-2 border-zinc-800 rounded-2xl p-6 text-3xl font-black text-white text-center">
+                        {{ players[currentPlayerIndex].name }}
+                    </div>
+                    <button @click="regStep = 'reveal'" class="w-full py-5 bg-violet-600 hover:bg-violet-700 text-white rounded-2xl text-xl font-black shadow-xl transition">
+                        I am {{ players[currentPlayerIndex].name }}
+                    </button>
+                    <button @click="modalType = null" class="text-zinc-700 font-bold text-sm mt-4 transition hover:text-zinc-500">MODERATOR: Skip Reshuffle</button>
+                </div>
+
+                <!-- Reveal Step -->
+                <div v-if="regStep === 'reveal'" class="space-y-8">
+                    <div class="bg-zinc-900 border border-zinc-800 rounded-3xl p-10 shadow-2xl relative overflow-hidden">
+                        <div class="absolute inset-0 bg-violet-600/5 pointer-events-none"></div>
+                        <p class="text-zinc-500 uppercase font-black tracking-widest text-sm mb-4">{{ players[currentPlayerIndex].name }}, your NEW role is...</p>
+                        <i :class="[getRoleIcon(players[currentPlayerIndex].role), getRoleColor(players[currentPlayerIndex].role)]" class="text-8xl mb-6 block"></i>
+                        <h2 :class="getRoleColor(players[currentPlayerIndex].role)" class="text-5xl font-black mb-4 uppercase">{{ players[currentPlayerIndex].role }}</h2>
+                        <p class="text-zinc-400 italic">"{{ getRoleQuote(players[currentPlayerIndex].role) }}"</p>
+                    </div>
+                    <div class="space-y-4">
+                        <p class="text-red-500 font-bold animate-pulse">DO NOT SHOW ANYONE!</p>
+                        <button @click="nextReassign" class="w-full py-6 bg-white text-black rounded-2xl text-2xl font-black shadow-2xl transition hover:bg-zinc-200">
+                            Close & Pass Phone
+                        </button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Done! -->
+            <div v-else class="max-w-md w-full space-y-6">
+                <i class="fa-solid fa-circle-check text-emerald-500 text-8xl mb-4"></i>
+                <h2 class="text-4xl font-black text-white">Reshuffle Complete!</h2>
+                <p class="text-zinc-400">All players have received their new roles.</p>
+                <button @click="finishReassign" class="w-full py-5 bg-violet-600 hover:bg-violet-700 text-white rounded-2xl text-xl font-black transition">
+                    Go to Moderator Console
+                </button>
+            </div>
+        </div>
+    </transition>
+
+</div>
+
+<script>
+    const { createApp, ref, computed, reactive } = Vue;
+
+    createApp({
+        setup() {
+            const gameState = ref('setup');
+            const nightNum = ref(1);
+            const modalType = ref(null); // 'setup', 'registration', 'reassign', 'rename'
+            const logs = ref([]);
+            
+            const totalExpected = ref(10);
+            const pool = ref([]); 
+            const regStep = ref('input');
+            const regName = ref('');
+            const regRole = ref('');
+            const currentPlayerIndex = ref(0);
+
+            // Rename management
+            const renameValue = ref('');
+            const activePlayer = ref(null);
+
+            const players = ref([]);
+
+            const autoRoleConfig = reactive([
+                { role: 'Werewolf', count: 2, min: 1, color: 'text-red-500' },
+                { role: 'Doctor', count: 1, min: 1, color: 'text-cyan-400' }, 
+                { role: 'Seer', count: 1, min: 1, color: 'text-purple-400' },
+                { role: 'Hunter', count: 1, min: 0, color: 'text-orange-400' }
+            ]);
+
+            const totalSpecialRoles = computed(() => autoRoleConfig.reduce((acc, curr) => acc + curr.count, 0));
+            const currentPhaseLabel = computed(() => gameState.value === 'setup' ? 'Setup' : (gameState.value === 'night' ? `Night ${nightNum.value}` : `Day ${nightNum.value}`));
+            const allRevealed = computed(() => players.value.length > 0 && players.value.every(p => p.roleVisible));
+
+            const addLog = (text) => {
+                const now = new Date();
+                logs.value.unshift({ time: now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }), text });
+            };
+
+            const openSetupModal = () => { modalType.value = 'setup'; };
+
+            const confirmSetup = () => {
+                let newPool = [];
+                autoRoleConfig.forEach(cfg => {
+                    for(let i=0; i < cfg.count; i++) newPool.push(cfg.role);
+                });
+                while(newPool.length < totalExpected.value) {
+                    newPool.push('Villager');
+                }
+                pool.value = newPool.sort(() => Math.random() - 0.5);
+                addLog(`Pool locked: ${totalExpected.value} roles ready.`);
+                modalType.value = null;
+            };
+
+            const startRegistration = () => {
+                regStep.value = 'input';
+                regName.value = '';
+                modalType.value = 'registration';
+            };
+
+            const handleRegSubmit = () => {
+                if (!regName.value.trim() || pool.value.length === 0) return;
+                regRole.value = pool.value.shift();
+                regStep.value = 'reveal';
+            };
+
+            const finishRegistration = () => {
+                players.value.push({
+                    id: Date.now(),
+                    name: regName.value,
+                    role: regRole.value,
+                    isAlive: true,
+                    roleVisible: false
+                });
+                regStep.value = 'input';
+                regName.value = '';
+            };
+
+            // Player Management
+            const deletePlayer = (player) => {
+                const index = players.value.findIndex(p => p.id === player.id);
+                if (index !== -1) {
+                    addLog(`Removed player: ${player.name}`);
+                    players.value.splice(index, 1);
+                }
+            };
+
+            const openRenameModal = (player) => {
+                activePlayer.value = player;
+                renameValue.value = player.name;
+                modalType.value = 'rename';
+            };
+
+            const confirmRename = () => {
+                if (activePlayer.value && renameValue.value.trim()) {
+                    const oldName = activePlayer.value.name;
+                    activePlayer.value.name = renameValue.value.trim();
+                    addLog(`Renamed ${oldName} to ${activePlayer.value.name}`);
+                    modalType.value = null;
+                    activePlayer.value = null;
+                }
+            };
+
+            const toggleStatus = (p) => {
+                p.isAlive = !p.isAlive;
+                addLog(`${p.name} is ${p.isAlive ? 'Revived' : 'Eliminated'}`);
+            };
+
+            const toggleAllRoles = () => {
+                const target = !allRevealed.value;
+                players.value.forEach(p => p.roleVisible = target);
+            };
+
+            const toggleGame = () => {
+                if (gameState.value === 'setup' || gameState.value === 'day') {
+                    gameState.value = 'night';
+                    players.value.forEach(p => p.roleVisible = false);
+                    addLog(`Night ${nightNum.value} begins.`);
+                } else {
+                    gameState.value = 'day';
+                    addLog(`Day ${nightNum.value} begins.`);
+                    nightNum.value++;
+                }
+            };
+
+            const resetGame = () => {
+                if (players.value.length === 0) {
+                    gameState.value = 'setup';
+                    nightNum.value = 1;
+                    players.value = [];
+                    pool.value = [];
+                    logs.value = [];
+                    addLog('Game Reset.');
+                    return;
+                }
+
+                gameState.value = 'setup';
+                nightNum.value = 1;
+                logs.value = [];
+                
+                totalExpected.value = players.value.length;
+                let newPool = [];
+                autoRoleConfig.forEach(cfg => {
+                    for(let i=0; i < cfg.count; i++) newPool.push(cfg.role);
+                });
+                while(newPool.length < players.value.length) {
+                    newPool.push('Villager');
+                }
+                newPool = newPool.sort(() => Math.random() - 0.5);
+
+                players.value.forEach(p => {
+                    p.role = newPool.shift();
+                    p.isAlive = true;
+                    p.roleVisible = false;
+                });
+
+                addLog('Game Reset. Roles reshuffled.');
+                
+                currentPlayerIndex.value = 0;
+                regStep.value = 'input';
+                modalType.value = 'reassign';
+            };
+
+            const nextReassign = () => {
+                currentPlayerIndex.value++;
+                if (currentPlayerIndex.value >= players.value.length) {
+                    regStep.value = 'done';
+                } else {
+                    regStep.value = 'input';
+                }
+            };
+
+            const finishReassign = () => {
+                modalType.value = null;
+            };
+
+            const getRoleIcon = (role) => {
+                switch(role) {
+                    case 'Werewolf': return 'fa-solid fa-wolf-pack-white';
+                    case 'Doctor': return 'fa-solid fa-heart-pulse';
+                    case 'Seer': return 'fa-solid fa-eye';
+                    case 'Hunter': return 'fa-solid fa-crosshairs';
+                    default: return 'fa-solid fa-user-group';
+                }
+            };
+
+            const getRoleColor = (role) => {
+                switch(role) {
+                    case 'Werewolf': return 'text-red-500';
+                    case 'Doctor': return 'text-cyan-400';
+                    case 'Seer': return 'text-purple-400';
+                    case 'Hunter': return 'text-orange-400';
+                    default: return 'text-zinc-500';
+                }
+            };
+
+            const getRoleQuote = (role) => {
+                switch(role) {
+                    case 'Werewolf': return 'Stay quiet. Kill fast.';
+                    case 'Doctor': return 'Save the innocent.';
+                    case 'Seer': return 'Find the truth.';
+                    case 'Hunter': return 'Last shot counts.';
+                    default: return 'Survive the night.';
+                }
+            };
+
+            return {
+                gameState, nightNum, players, modalType, logs,
+                totalExpected, pool, regStep, regName, regRole, autoRoleConfig, totalSpecialRoles,
+                currentPlayerIndex, currentPhaseLabel, allRevealed, renameValue,
+                openSetupModal, confirmSetup, startRegistration, handleRegSubmit, finishRegistration,
+                toggleStatus, toggleAllRoles, toggleGame, resetGame, nextReassign, finishReassign,
+                deletePlayer, openRenameModal, confirmRename,
+                getRoleIcon, getRoleColor, getRoleQuote
+            };
+        }
+    }).mount('#app');
+</script>
+</body>
+</html>
